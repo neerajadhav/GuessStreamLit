@@ -19,22 +19,37 @@ st.set_page_config(
 
 
 class AIGuessingGame:
-    def __init__(self):
-        self.setup_gemini()
+    def __init__(self, api_key=None):
+        self.api_key = api_key
+        self.model = None
+        if api_key:
+            self.setup_gemini(api_key)
 
-    def setup_gemini(self):
+    def setup_gemini(self, api_key):
         """Initialize Gemini API"""
-        api_key = os.getenv('GEMINI_API_KEY')
-        if not api_key or api_key == 'your_gemini_api_key_here':
-            st.error("🚫 Please set up your Gemini API key in the .env file!")
-            st.info("Get your API key from: https://makersuite.google.com/app/apikey")
-            st.stop()
-
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-2.5-pro')
+        try:
+            genai.configure(api_key=api_key)
+            self.model = genai.GenerativeModel('gemini-2.5-pro')
+            return True
+        except Exception as e:
+            st.error(f"❌ Error setting up Gemini API: {str(e)}")
+            return False
 
     def generate_mystery_statement(self, difficulty: str = "medium") -> Tuple[str, str]:
         """Generate a mystery statement and its answer"""
+        if not self.model:
+            st.error("❌ Gemini API not configured. Please check your API key.")
+            # Return fallback statement
+            fallbacks = [
+                ("I am made of paper but hold no words, I protect what matters most to you", "Envelope"),
+                ("I have a face but no eyes, hands but cannot clap, I tell you something important every second", "Clock"),
+                ("I am full of holes but still hold water", "Sponge"),
+                ("I can be cracked, I can be made, I can be told, I can be played", "Joke"),
+                ("I have cities, but no houses. I have mountains, but no trees. I have water, but no fish", "Map")
+            ]
+            import random
+            return random.choice(fallbacks)
+
         prompt = f"""
         Generate a mysterious statement about a common object, person, place, or concept. 
         The difficulty should be {difficulty}.
@@ -96,6 +111,18 @@ class AIGuessingGame:
 
     def score_guess(self, guess: str, answer: str, statement: str) -> int:
         """Score a player's guess using AI"""
+        if not self.model:
+            # Simple fallback scoring when API is not available
+            guess_lower = guess.lower().strip()
+            answer_lower = answer.lower().strip()
+
+            if guess_lower == answer_lower:
+                return 100
+            elif guess_lower in answer_lower or answer_lower in guess_lower:
+                return 80
+            else:
+                return 20
+
         prompt = f"""
         Score how close this guess is to the correct answer on a scale of 0-100.
         
@@ -147,11 +174,14 @@ def initialize_session_state():
         st.session_state.round_complete = False
     if 'game_complete' not in st.session_state:
         st.session_state.game_complete = False
+    if 'gemini_api_key' not in st.session_state:
+        st.session_state.gemini_api_key = ""
+    if 'api_key_valid' not in st.session_state:
+        st.session_state.api_key_valid = False
 
 
 def main():
     initialize_session_state()
-    game = AIGuessingGame()
 
     # Header
     st.title("🎯 AI Guessing Game")
@@ -159,39 +189,131 @@ def main():
     # Sidebar for game setup
     with st.sidebar:
         st.header("🎮 Game Setup")
-
-        # Game settings
-        total_rounds = st.selectbox("Select number of rounds:", [3, 5, 7],
-                                    index=0 if not st.session_state.game_started else None,
-                                    disabled=st.session_state.game_started)
-
-        difficulty = st.selectbox("Difficulty:", ["easy", "medium", "hard"],
-                                  index=1 if not st.session_state.game_started else None,
-                                  disabled=st.session_state.game_started)
-
-        # Player names
-        player1_name = st.text_input("Player 1 Name:", value="Player 1",
-                                     disabled=st.session_state.game_started)
-        player2_name = st.text_input("Player 2 Name:", value="Player 2",
-                                     disabled=st.session_state.game_started)
-
-        if not st.session_state.game_started:
-            if st.button("🚀 Start Game", type="primary"):
-                st.session_state.game_started = True
-                st.session_state.total_rounds = total_rounds
-                st.session_state.difficulty = difficulty
-                st.session_state.player_names = [player1_name, player2_name]
-                st.session_state.player_scores = {
-                    player1_name: 0, player2_name: 0}
-                st.rerun()
+        
+        # API Key input
+        st.subheader("🔑 Gemini API Configuration")
+        api_key = st.text_input(
+            "Enter your Gemini API Key:",
+            type="password",
+            value=st.session_state.gemini_api_key,
+            help="Get your API key from: https://makersuite.google.com/app/apikey"
+        )
+        
+        # Update session state and validate API key
+        if api_key != st.session_state.gemini_api_key:
+            st.session_state.gemini_api_key = api_key
+            st.session_state.api_key_valid = False
+            # Reset game if API key changes
+            if st.session_state.game_started:
+                st.session_state.game_started = False
+                st.warning("⚠️ Game reset due to API key change")
+        
+        # Test API key if provided
+        if api_key and not st.session_state.api_key_valid:
+            if st.button("🔍 Test API Key"):
+                try:
+                    genai.configure(api_key=api_key)
+                    test_model = genai.GenerativeModel('gemini-2.5-pro')
+                    test_response = test_model.generate_content("Say 'API key is working'")
+                    if test_response.text:
+                        st.session_state.api_key_valid = True
+                        st.success("✅ API key is valid!")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Invalid API key: {str(e)}")
+                    st.session_state.api_key_valid = False
+        
+        if st.session_state.api_key_valid:
+            st.success("✅ API key configured")
+        elif api_key:
+            st.info("🔍 Click 'Test API Key' to validate")
         else:
-            if st.button("🔄 New Game"):
-                # Reset all session state
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                st.rerun()
+            st.warning("⚠️ Please enter your Gemini API key")
+        
+        st.divider()
+        
+        # Initialize game with API key
+        if st.session_state.api_key_valid:
+            game = AIGuessingGame(api_key)
+        else:
+            game = None
 
-    # Main game area
+        # Game settings (only show if API key is valid)
+        if st.session_state.api_key_valid:
+            total_rounds = st.selectbox("Select number of rounds:", [3, 5, 7],
+                                        index=0 if not st.session_state.game_started else None,
+                                        disabled=st.session_state.game_started)
+
+            difficulty = st.selectbox("Difficulty:", ["easy", "medium", "hard"],
+                                      index=1 if not st.session_state.game_started else None,
+                                      disabled=st.session_state.game_started)
+
+            # Player names
+            player1_name = st.text_input("Player 1 Name:", value="Player 1",
+                                         disabled=st.session_state.game_started)
+            player2_name = st.text_input("Player 2 Name:", value="Player 2",
+                                         disabled=st.session_state.game_started)
+
+            if not st.session_state.game_started:
+                if st.button("🚀 Start Game", type="primary"):
+                    st.session_state.game_started = True
+                    st.session_state.total_rounds = total_rounds
+                    st.session_state.difficulty = difficulty
+                    st.session_state.player_names = [player1_name, player2_name]
+                    st.session_state.player_scores = {
+                        player1_name: 0, player2_name: 0}
+                    st.rerun()
+            else:
+                if st.button("🔄 New Game"):
+                    # Reset all session state except API key
+                    api_key_backup = st.session_state.gemini_api_key
+                    api_valid_backup = st.session_state.api_key_valid
+                    for key in list(st.session_state.keys()):
+                        del st.session_state[key]
+                    st.session_state.gemini_api_key = api_key_backup
+                    st.session_state.api_key_valid = api_valid_backup
+                    st.rerun()
+        else:
+            st.info("🔑 Please configure a valid API key to access game settings")
+
+    # Main game area - show different content based on API key status
+    if not st.session_state.api_key_valid:
+        st.info("👈 Please enter and validate your Gemini API key in the sidebar to start playing!")
+        
+        # Show instructions
+        st.markdown("## 🔑 Getting Your Gemini API Key")
+        st.markdown("""
+        1. Go to [Google AI Studio](https://makersuite.google.com/app/apikey)
+        2. Sign in with your Google account
+        3. Click "Create API Key"
+        4. Copy the generated API key
+        5. Paste it in the sidebar and click "Test API Key"
+        """)
+        
+        st.markdown("## 📋 How to Play")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("""
+            ### 🎯 Game Rules
+            - The AI will give you mysterious statements
+            - Both players guess simultaneously
+            - AI scores based on how close you are
+            - Player with highest total score wins!
+            """)
+
+        with col2:
+            st.markdown("""
+            ### 🏆 Scoring System
+            - **100 points**: Perfect answer
+            - **80-99 points**: Very close
+            - **60-79 points**: Same category
+            - **0-59 points**: Not quite there
+            """)
+        
+        return  # Exit early if no valid API key
+
+    # Rest of the game logic (only runs if API key is valid)
     if not st.session_state.game_started:
         st.info(
             "👈 Configure your game settings in the sidebar and click 'Start Game' to begin!")
