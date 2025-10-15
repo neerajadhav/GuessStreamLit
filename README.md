@@ -5,9 +5,11 @@ A fun, interactive guessing game built with Streamlit where two players compete 
 ## 🌟 Features
 
 - **Dual Player Mode**: Two players play simultaneously
-- **AI Host**: Powered by Google's Gemini 2.0 Flash model
+- **AI Host**: Powered by Google's Gemini AI models
+- **Model Selection**: Choose from 5 different AI models based on your needs and budget
 - **Smart Scoring**: AI evaluates how close your guesses are
 - **Flexible Rounds**: Choose 3, 5, or 7 rounds
+- **API Quota Management**: Automatic fallback to offline mode to preserve quota
 - **Clean UI**: Beautiful, responsive Streamlit interface
 - **Difficulty Levels**: Easy, Medium, and Hard modes
 
@@ -36,7 +38,20 @@ pip install -r requirements.txt
    GEMINI_API_KEY=AIzaSyC1234567890abcdefghijk
    ```
 
-### 5. Run the Application
+### 5. Choose Your AI Model (New!)
+The app now supports multiple Gemini models:
+
+| Model | Cost | Speed | Quality | Best For |
+|-------|------|-------|---------|----------|
+| **Gemini 1.5 Flash** ⭐ | Low | Fast | Good | Most games, best value |
+| **Gemini 1.5 Flash 8B** ⭐ | Lowest | Fastest | Good | Quick games, tight budget |
+| Gemini 1.5 Pro | Medium | Medium | High | High-quality riddles |
+| Gemini 2.0 Flash | Medium | Fast | High | Latest features |
+| Gemini Exp 1206 | High | Medium | Highest | Advanced creativity |
+
+⭐ = Recommended for this game
+
+### 6. Run the Application
 ```bash
 streamlit run app.py
 ```
@@ -46,7 +61,9 @@ The game will open in your web browser at `http://localhost:8501`
 ## 🎮 How to Play
 
 1. **Setup Game**: 
-   - Choose number of rounds (3, 5, or 7)
+   - Enter your Gemini API key
+   - Choose your preferred AI model
+   - Select number of rounds (3, 5, or 7)
    - Select difficulty level
    - Enter player names
    - Click "Start Game"
@@ -73,12 +90,17 @@ The game will open in your web browser at `http://localhost:8501`
 ## 🛠️ Technical Details
 
 - **Frontend**: Streamlit with custom CSS
-- **AI Model**: Google Gemini 2.0 Flash 
+- **AI Models**: Multiple Google Gemini models available
+  - Gemini 1.5 Flash (default, cost-effective)
+  - Gemini 1.5 Flash 8B (ultra-fast, lowest cost)
+  - Gemini 1.5 Pro (balanced performance)
+  - Gemini 2.0 Flash (experimental, latest)
+  - Gemini Exp 1206 (advanced features)
 - **Languages**: Python 3.7+
 - **Dependencies**: 
-  - `streamlit==1.28.1`
-  - `google-generativeai==0.3.2`
-  - `python-dotenv==1.0.0`
+  - `streamlit>=1.25.0`
+  - `google-generativeai>=0.3.0`
+  - `python-dotenv>=0.19.0`
 
 ## 🎨 UI Features
 
@@ -93,6 +115,13 @@ The game will open in your web browser at `http://localhost:8501`
 - Make sure your `.env` file has the correct API key
 - Verify the API key is active in Google AI Studio
 - Check for any billing issues in your Google Cloud account
+- Try different models if one isn't working
+
+### Model Selection Tips
+- Start with **Gemini 1.5 Flash** for best value
+- Use **Gemini 1.5 Flash 8B** for maximum speed and lowest cost
+- Try **Gemini 1.5 Pro** for higher quality riddles
+- Experimental models may have limited availability
 
 ### Installation Issues
 ```bash
