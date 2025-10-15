@@ -20,6 +20,8 @@ class GameConfig:
     DEFAULT_ROUND_OPTIONS = [3, 5, 7]
     DIFFICULTY_OPTIONS = ["easy", "medium", "hard"]
     DEFAULT_DIFFICULTY = "medium"
+    MIN_PLAYERS = 2
+    MAX_PLAYERS = 5
     
     # Scoring System
     SCORE_PERFECT = 100
@@ -166,22 +168,24 @@ class AIGuessingGame:
                 st.session_state.get('use_fallback', False) or 
                 st.session_state.get('api_call_count', 0) > GameConfig.MAX_API_CALLS_PER_SESSION)
 
-    def score_guesses(self, guess1: str, guess2: str, answer: str, statement: str) -> Tuple[int, int]:
-        """Score both players' guesses in a single API call to save quota"""
+    def score_multiple_guesses(self, guesses: List[str], answer: str, statement: str) -> List[int]:
+        """Score multiple players' guesses in a single API call to save quota"""
         
         # Use simple scoring if in fallback mode or quota exhausted
         if self._should_use_fallback():
-            return self._simple_score(guess1, answer), self._simple_score(guess2, answer)
+            return [self._simple_score(guess, answer) for guess in guesses]
 
+        # Create prompt for multiple guesses
+        guess_lines = '\n'.join([f"Guess{i+1}: \"{guess}\"" for i, guess in enumerate(guesses)])
+        
         prompt = f"""
-        Score both guesses (0-100):
+        Score all guesses (0-100):
         Answer: "{answer}"
-        Guess1: "{guess1}"
-        Guess2: "{guess2}"
+        {guess_lines}
         
         Rules: 100=exact, 80=close, 60=related, 40=somewhat, 20=distant, 0=unrelated
         
-        Return: score1,score2 (e.g., "85,65")
+        Return: score1,score2,score3... (e.g., "85,65,90")
         """
 
         try:
@@ -189,18 +193,23 @@ class AIGuessingGame:
             st.session_state.api_call_count = st.session_state.get('api_call_count', 0) + 1
             scores_text = response.text.strip()
             scores = [int(s.strip()) for s in scores_text.split(',')]
-            if len(scores) == 2:
-                return (max(GameConfig.SCORE_MIN, min(GameConfig.SCORE_MAX, scores[0])), 
-                       max(GameConfig.SCORE_MIN, min(GameConfig.SCORE_MAX, scores[1])))
+            if len(scores) == len(guesses):
+                return [max(GameConfig.SCORE_MIN, min(GameConfig.SCORE_MAX, score)) for score in scores]
             else:
                 raise ValueError("Invalid score format")
         except Exception:
-            return self._simple_score(guess1, answer), self._simple_score(guess2, answer)
+            return [self._simple_score(guess, answer) for guess in guesses]
 
     def score_guess(self, guess: str, answer: str, statement: str = "") -> int:
         """Score a single player's guess (legacy method for compatibility)"""
-        score1, _ = self.score_guesses(guess, "", answer, statement)
-        return score1
+        scores = self.score_multiple_guesses([guess], answer, statement)
+        return scores[0]
+
+
+    def score_guesses(self, guess1: str, guess2: str, answer: str, statement: str) -> Tuple[int, int]:
+        """Score both players' guesses (legacy method for backward compatibility)"""
+        scores = self.score_multiple_guesses([guess1, guess2], answer, statement)
+        return scores[0], scores[1]
 
 
 def get_available_models():
@@ -286,7 +295,9 @@ def initialize_session_state():
     defaults = {
         'game_started': False,
         'current_round': 1,
-        'player_scores': {'Player 1': 0, 'Player 2': 0},
+        'player_scores': {},
+        'player_names': ['Player 1', 'Player 2'],
+        'num_players': 2,
         'current_statement': "",
         'current_answer': "",
         'round_complete': False,
@@ -426,8 +437,8 @@ def render_game_settings():
     """Render game configuration settings"""
     if not st.session_state.api_key_valid:
         st.info("🔑 Please configure a valid API key to access game settings")
-        return None, None, None, None
-    
+        return None, None, None
+
     total_rounds = st.selectbox("Select number of rounds:", GameConfig.DEFAULT_ROUND_OPTIONS,
                                 index=0 if not st.session_state.game_started else None,
                                 disabled=st.session_state.game_started)
@@ -437,13 +448,53 @@ def render_game_settings():
                               if not st.session_state.game_started else None,
                               disabled=st.session_state.game_started)
 
-    # Player names
-    player1_name = st.text_input("Player 1 Name:", value="Player 1",
-                                 disabled=st.session_state.game_started)
-    player2_name = st.text_input("Player 2 Name:", value="Player 2",
-                                 disabled=st.session_state.game_started)
+    # Player management
+    st.subheader("👥 Players")
     
-    return total_rounds, difficulty, player1_name, player2_name
+    if not st.session_state.game_started:
+        # Number of players selector
+        num_players = st.slider(
+            "Number of players:", 
+            min_value=GameConfig.MIN_PLAYERS, 
+            max_value=GameConfig.MAX_PLAYERS, 
+            value=st.session_state.num_players,
+            disabled=st.session_state.game_started
+        )
+        
+        # Update number of players if changed
+        if num_players != st.session_state.num_players:
+            st.session_state.num_players = num_players
+            # Adjust player names list
+            current_names = st.session_state.player_names
+            if len(current_names) < num_players:
+                # Add new players
+                for i in range(len(current_names), num_players):
+                    current_names.append(f"Player {i + 1}")
+            elif len(current_names) > num_players:
+                # Remove excess players
+                current_names = current_names[:num_players]
+            st.session_state.player_names = current_names
+        
+        # Player name inputs
+        player_names = []
+        for i in range(num_players):
+            default_name = st.session_state.player_names[i] if i < len(st.session_state.player_names) else f"Player {i + 1}"
+            name = st.text_input(
+                f"Player {i + 1} Name:", 
+                value=default_name,
+                key=f"player_name_{i}",
+                disabled=st.session_state.game_started
+            )
+            player_names.append(name)
+        
+        st.session_state.player_names = player_names
+    else:
+        # Show current players when game is started
+        st.write("Current players:")
+        for i, name in enumerate(st.session_state.player_names):
+            st.write(f"👤 {i + 1}. {name}")
+    
+    return total_rounds, difficulty, st.session_state.player_names
 
 
 def render_game_instructions():
@@ -454,8 +505,9 @@ def render_game_instructions():
     with col1:
         st.markdown("""
         ### 🎯 Game Rules
+        - Play with 2-5 players simultaneously
         - The AI will give you mysterious statements
-        - Both players guess simultaneously
+        - All players guess at the same time
         - AI scores based on how close you are
         - Player with highest total score wins!
         """)
@@ -470,17 +522,26 @@ def render_game_instructions():
         """)
 
 
-def render_player_scores(player1_name, player2_name):
+def render_player_scores(player_names):
     """Render current player scores"""
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader(f"👤 {player1_name}")
-        st.metric("Score", f"{st.session_state.player_scores[player1_name]} pts")
-
-    with col2:
-        st.subheader(f"👤 {player2_name}")
-        st.metric("Score", f"{st.session_state.player_scores[player2_name]} pts")
+    num_players = len(player_names)
+    
+    if num_players <= 3:
+        # For 2-3 players, use columns
+        cols = st.columns(num_players)
+        for i, name in enumerate(player_names):
+            with cols[i]:
+                st.subheader(f"👤 {name}")
+                score = st.session_state.player_scores.get(name, 0)
+                st.metric("Score", f"{score} pts")
+    else:
+        # For 4-5 players, use a more compact layout
+        st.subheader("👥 Current Scores")
+        cols = st.columns(2)
+        for i, name in enumerate(player_names):
+            with cols[i % 2]:
+                score = st.session_state.player_scores.get(name, 0)
+                st.write(f"👤 **{name}**: {score} pts")
 
 
 def render_model_comparison():
@@ -543,16 +604,16 @@ def main():
             game = None
 
         # Game settings
-        total_rounds, difficulty, player1_name, player2_name = render_game_settings()
+        total_rounds, difficulty, player_names = render_game_settings()
         
-        if st.session_state.api_key_valid:
+        if st.session_state.api_key_valid and player_names:
             if not st.session_state.game_started:
                 if st.button("🚀 Start Game", type="primary"):
                     st.session_state.game_started = True
                     st.session_state.total_rounds = total_rounds
                     st.session_state.difficulty = difficulty
-                    st.session_state.player_names = [player1_name, player2_name]
-                    st.session_state.player_scores = {player1_name: 0, player2_name: 0}
+                    st.session_state.player_names = player_names
+                    st.session_state.player_scores = {name: 0 for name in player_names}
                     # Reset API call count for new game
                     st.session_state.api_call_count = 0
                     st.session_state.use_fallback = False
@@ -588,9 +649,8 @@ def main():
         st.header(f"🎪 Round {st.session_state.current_round} of {st.session_state.total_rounds}")
 
         # Display current scores
-        player1_name = st.session_state.player_names[0]
-        player2_name = st.session_state.player_names[1]
-        render_player_scores(player1_name, player2_name)
+        player_names = st.session_state.player_names
+        render_player_scores(player_names)
 
         # Generate new statement for the round
         if not st.session_state.current_statement and not st.session_state.game_complete:
@@ -605,62 +665,75 @@ def main():
             st.subheader("🤖 AI Host Says:")
             st.info(f'"{st.session_state.current_statement}"')
 
-            # Player input form (single form for both)
+            # Player input form (single form for all players)
             if not st.session_state.round_complete:
                 with st.form(f"guess_form_{st.session_state.current_round}"):
-                    col1, col2 = st.columns(2)
-
-                    with col1:
-                        st.subheader(f"🎯 {player1_name}'s Guess")
-                        player1_guess = st.text_input(
-                            "Your guess:",
-                            key=f"p1_guess_{st.session_state.current_round}",
-                            type="password"
-                        )
-
-                    with col2:
-                        st.subheader(f"🎯 {player2_name}'s Guess")
-                        player2_guess = st.text_input(
-                            "Your guess:",
-                            key=f"p2_guess_{st.session_state.current_round}",
-                            type="password"
-                        )
-
-                    # Submit button (always enabled)
-                    submit = st.form_submit_button("Submit Guesses", type="primary")
+                    st.subheader("🎯 Enter Your Guesses")
                     
-                    # Show status of both guesses
-                    if player1_guess and player2_guess:
-                        st.success("✅ Both players have entered their guesses! Ready to submit.")
-                    elif player1_guess:
-                        st.warning(f"⏳ Waiting for {player2_name} to enter their guess...")
-                    elif player2_guess:
-                        st.warning(f"⏳ Waiting for {player1_name} to enter their guess...")
+                    # Create columns based on number of players
+                    num_players = len(player_names)
+                    if num_players <= 3:
+                        cols = st.columns(num_players)
                     else:
-                        st.info("📝 Both players need to enter their guesses before submitting.")
+                        # For 4-5 players, use 2 rows
+                        cols_row1 = st.columns(min(3, num_players))
+                        if num_players > 3:
+                            cols_row2 = st.columns(num_players - 3)
+                            cols = list(cols_row1) + list(cols_row2)
+                        else:
+                            cols = cols_row1
+                    
+                    player_guesses = {}
+                    
+                    for i, name in enumerate(player_names):
+                        if i < len(cols):
+                            with cols[i]:
+                                st.write(f"**{name}**")
+                                guess = st.text_input(
+                                    "Your guess:",
+                                    key=f"p{i}_guess_{st.session_state.current_round}",
+                                    type="password",
+                                    label_visibility="collapsed"
+                                )
+                                player_guesses[name] = guess
+
+                    # Submit button
+                    submit = st.form_submit_button("Submit All Guesses", type="primary")
+                    
+                    # Show status of guesses
+                    filled_guesses = sum(1 for guess in player_guesses.values() if guess)
+                    total_players = len(player_names)
+                    
+                    if filled_guesses == total_players:
+                        st.success(f"✅ All {total_players} players have entered their guesses! Ready to submit.")
+                    elif filled_guesses > 0:
+                        remaining = [name for name, guess in player_guesses.items() if not guess]
+                        st.warning(f"⏳ Waiting for: {', '.join(remaining)}")
+                    else:
+                        st.info(f"📝 All {total_players} players need to enter their guesses before submitting.")
 
                 if submit:
-                    if not player1_guess or not player2_guess:
-                        st.error("❌ Both players must enter their guesses before submitting!")
+                    empty_guesses = [name for name, guess in player_guesses.items() if not guess]
+                    if empty_guesses:
+                        st.error(f"❌ The following players must enter their guesses: {', '.join(empty_guesses)}")
                     else:
-                        with st.spinner("🤖 AI is scoring your guesses..."):
-                            # Score both guesses in a single API call to save quota
-                            score1, score2 = game.score_guesses(
-                                player1_guess, player2_guess, 
-                                st.session_state.current_answer, 
+                        with st.spinner("🤖 AI is scoring all guesses..."):
+                            # Score all guesses in a single API call
+                            guesses_list = [player_guesses[name] for name in player_names]
+                            scores = game.score_multiple_guesses(
+                                guesses_list,
+                                st.session_state.current_answer,
                                 st.session_state.current_statement
                             )
 
                             # Update scores
-                            st.session_state.player_scores[player1_name] += score1
-                            st.session_state.player_scores[player2_name] += score2
+                            for i, name in enumerate(player_names):
+                                st.session_state.player_scores[name] += scores[i]
 
                             # Store round results
                             st.session_state.last_round_results = {
-                                'player1_guess': player1_guess,
-                                'player2_guess': player2_guess,
-                                'score1': score1,
-                                'score2': score2,
+                                'guesses': player_guesses,
+                                'scores': {name: scores[i] for i, name in enumerate(player_names)},
                                 'correct_answer': st.session_state.current_answer
                             }
 
@@ -677,21 +750,39 @@ def main():
                 with col2:
                     st.info(f"🎯 **Correct Answer:** {results['correct_answer']}")
 
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.success(f"""
-                    **{player1_name}'s Result:**
-                    - Guess: "{results['player1_guess']}"
-                    - Score: {results['score1']} points
-                    """)
-
-                with col2:
-                    st.success(f"""
-                    **{player2_name}'s Result:**
-                    - Guess: "{results['player2_guess']}"
-                    - Score: {results['score2']} points
-                    """)
+                # Display results for all players
+                num_players = len(player_names)
+                if num_players <= 2:
+                    cols = st.columns(num_players)
+                    for i, name in enumerate(player_names):
+                        with cols[i]:
+                            st.success(f"""
+                            **{name}'s Result:**
+                            - Guess: "{results['guesses'][name]}"
+                            - Score: {results['scores'][name]} points
+                            """)
+                else:
+                    # For more than 2 players, use a more compact layout
+                    st.markdown("#### 🏆 Player Results")
+                    
+                    # Sort players by score for this round (descending)
+                    sorted_players = sorted(player_names, key=lambda x: results['scores'][x], reverse=True)
+                    
+                    for i, name in enumerate(sorted_players):
+                        score = results['scores'][name]
+                        guess = results['guesses'][name]
+                        
+                        # Add medal emojis for top performers
+                        if i == 0 and score > 0:
+                            emoji = "🥇"
+                        elif i == 1 and score > 0:
+                            emoji = "🥈"
+                        elif i == 2 and score > 0:
+                            emoji = "🥉"
+                        else:
+                            emoji = "👤"
+                        
+                        st.write(f"{emoji} **{name}**: \"{guess}\" → **{score} points**")
 
                 # Next round or end game
                 if st.session_state.current_round < st.session_state.total_rounds:
@@ -707,40 +798,42 @@ def main():
 
         # Game completion
         if st.session_state.game_complete:
-            # Determine winner
+            # Determine winner(s)
             final_scores = st.session_state.player_scores
-            player1_score = final_scores[player1_name]
-            player2_score = final_scores[player2_name]
-
-            if player1_score > player2_score:
-                winner = player1_name
-                winner_score = player1_score
-            elif player2_score > player1_score:
-                winner = player2_name
-                winner_score = player2_score
-            else:
-                winner = "It's a tie!"
-                winner_score = player1_score
+            max_score = max(final_scores.values())
+            winners = [name for name, score in final_scores.items() if score == max_score]
 
             # Winner announcement
-            if winner == "It's a tie!":
-                st.success("🤝 Amazing! It's a Tie!")
-                st.write(f"Both players scored {winner_score} points!")
-                st.write("You're both champions! 🏆")
+            st.markdown("### 🎉 Game Complete!")
+            
+            if len(winners) == 1:
+                st.success(f"🏆 Congratulations {winners[0]}!")
+                st.write(f"Champion with {max_score} points!")
+                st.write("You are the Guessing Master! 👑")
             else:
-                st.success(f"🎉 Congratulations {winner}!")
-                st.write(f"Winner with {winner_score} points!")
-                st.write("You are the Guessing Champion! 👑")
+                st.success(f"🤝 Amazing! It's a {len(winners)}-way Tie!")
+                st.write(f"Winners: {', '.join(winners)}")
+                st.write(f"All tied with {max_score} points!")
+                st.write("You're all champions! 🏆")
 
             # Final score summary
-            st.subheader("📈 Final Score Summary")
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.metric(label=f"🏆 {player1_name}", value=f"{player1_score} points")
-
-            with col2:
-                st.metric(label=f"🏆 {player2_name}", value=f"{player2_score} points")
+            st.subheader("📈 Final Leaderboard")
+            
+            # Sort players by final score (descending)
+            sorted_final = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
+            
+            # Display leaderboard
+            for i, (name, score) in enumerate(sorted_final):
+                if i == 0:
+                    emoji = "🥇"
+                elif i == 1:
+                    emoji = "🥈" 
+                elif i == 2:
+                    emoji = "🥉"
+                else:
+                    emoji = "👤"
+                
+                st.metric(label=f"{emoji} {name}", value=f"{score} points")
 
             st.balloons()
 
